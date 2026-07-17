@@ -1,0 +1,792 @@
+﻿import React, { useState, useEffect, useRef } from "react";
+import {
+  Search, Users, Calendar, Filter, Clock, CheckCircle2,
+  XCircle, AlertCircle, ChevronRight, FileText, ChevronDown,
+  Check, History, Download, MapPin, List, LayoutDashboard, Camera, RotateCw, MapPinned,
+  Plus, Loader2, Send
+} from "lucide-react";
+import LoadingSpinner from "../../components/LoadingSpinner";
+import toast from "react-hot-toast";
+import { fetchAttendanceLogsApi, createPunchApi } from "../../utils/attendanceApi";
+import { fetchUsersApi } from "../../utils/userApi";
+import { uploadFileApi } from "../../utils/uploadApi";
+
+// Converts a canvas dataURL (the captured selfie) into a File the backend upload endpoint can accept
+const dataUrlToFile = (dataUrl, filename) => {
+  const [header, base64] = dataUrl.split(",");
+  const mime = header.match(/:(.*?);/)[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+};
+
+const AttendanceDaily = () => {
+  const [attendanceData, setAttendanceData] = useState([]);
+  const [activeTab, setActiveTab] = useState("pending");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterDepartment, setFilterDepartment] = useState("");
+  const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
+  const [filterDate, setFilterDate] = useState(() => {
+    const today = new Date();
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  });
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(15);
+  const [tableLoading, setTableLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Attendance Form States
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalFormData, setModalFormData] = useState({
+    code: '',
+    name: '',
+    type: '',
+    department: '',
+    punchType: 'in'
+  });
+  const [capturedImage, setCapturedImage] = useState(null);
+  const [locationData, setLocationData] = useState({ latitude: '', longitude: '', locationName: '' });
+  const [cameraActive, setCameraActive] = useState(false);
+  const [loadingLocation, setLoadingLocation] = useState(false);
+  const [isPunching, setIsPunching] = useState(false);
+  const [userList, setUserList] = useState([]);
+
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+
+  const startCamera = async () => {
+    try {
+      setCameraActive(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+      }
+    } catch (err) {
+      console.error("startCamera Error:", err);
+      toast.error("Unable to access camera");
+      setCameraActive(false);
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Print Lat / Long at the image footer
+    if (locationData.latitude && locationData.longitude) {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+      ctx.fillRect(0, canvas.height - 40, canvas.width, 40);
+
+      ctx.font = "bold 14px Outfit, sans-serif";
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.fillText(
+        `Lat: ${parseFloat(locationData.latitude).toFixed(5)} | Long: ${parseFloat(locationData.longitude).toFixed(5)}`,
+        canvas.width / 2,
+        canvas.height - 15
+      );
+    }
+
+    const photoData = canvas.toDataURL('image/jpeg');
+    setCapturedImage(photoData);
+    stopCamera();
+  };
+
+  const fetchLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocation not supported by browser");
+      return;
+    }
+
+    setLoadingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude.toString();
+        const lng = position.coords.longitude.toString();
+
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`);
+          const data = await res.json();
+          const locName = data.display_name || `Coordinates: ${lat}, ${lng}`;
+          setLocationData({ latitude: lat, longitude: lng, locationName: locName });
+          toast.success("Location successfully identified!");
+        } catch (e) {
+          setLocationData({ latitude: lat, longitude: lng, locationName: `Coordinates: ${lat}, ${lng}` });
+        } finally {
+          setLoadingLocation(false);
+        }
+      },
+      (err) => {
+        console.error("fetchLocation Error:", err);
+        toast.error("Location services denied. Check device permissions.");
+        setLoadingLocation(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const fetchUserList = async () => {
+    try {
+      const result = await fetchUsersApi();
+      if (result.success) {
+        setUserList(result.data);
+      }
+    } catch (err) {
+      console.error("fetchUserList Error:", err);
+    }
+  };
+
+  const handleCodeChange = (e) => {
+    const selectedCode = e.target.value;
+    const employee = userList.find(u => u.code === selectedCode);
+
+    if (employee) {
+      setModalFormData({
+        ...modalFormData,
+        code: selectedCode,
+        name: employee.name,
+        type: employee.type || 'Article',
+        department: employee.department
+      });
+      toast.success(`Employee ${employee.name} identified!`);
+    } else {
+      setModalFormData({
+        ...modalFormData,
+        code: selectedCode,
+        name: '',
+        type: 'Article',
+        department: ''
+      });
+    }
+  };
+
+  const handlePunchSubmit = async (e) => {
+    e.preventDefault();
+    if (!modalFormData.code) return toast.error("Employee code is essential");
+    if (!modalFormData.name) return toast.error("Please verify employee code first");
+    if (!capturedImage) return toast.error("Live snapshot is mandatory");
+    if (!locationData.latitude) return toast.error("Please capture geolocation data");
+
+    setIsPunching(true);
+    const loadingToast = toast.loading('Syncing and submitting attendance...');
+
+    try {
+      // 1. Upload the selfie to the backend's local-disk upload endpoint
+      const photoFile = dataUrlToFile(
+        capturedImage,
+        `Attendance_${modalFormData.code}_${modalFormData.punchType.toUpperCase()}_${Date.now()}.jpg`
+      );
+      const photoUrl = await uploadFileApi(photoFile, "attendance");
+
+      // 2. Submit the punch — the backend validates IN/OUT sequencing for
+      // today (active session / already completed) and rejects with 409
+      await createPunchApi({
+        employeeCode: modalFormData.code,
+        employeeName: modalFormData.name,
+        employeeType: modalFormData.type || 'Article',
+        department: modalFormData.department,
+        punchType: modalFormData.punchType.toUpperCase(),
+        photoUrl,
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+        locationName: locationData.locationName,
+      });
+
+      toast.success(`Employee punched ${modalFormData.punchType.toUpperCase()} successfully!`, { id: loadingToast });
+      setIsModalOpen(false);
+      setCapturedImage(null);
+      setModalFormData({ code: '', name: '', type: 'Article', department: '', punchType: 'in' });
+      setLocationData({ latitude: '', longitude: '', locationName: '' });
+      fetchReportDailySheet();
+    } catch (err) {
+      console.error("handlePunchSubmit Error:", err);
+      toast.error(err.message || "Transaction mapping failed", { id: loadingToast });
+    } finally {
+      setIsPunching(false);
+    }
+  };
+
+  const fetchReportDailySheet = async () => {
+    setTableLoading(true);
+    setError(null);
+    try {
+      const result = await fetchAttendanceLogsApi();
+      if (!result.success) throw new Error(result.error || 'Failed to fetch daily logs');
+
+      // Group punch events by Employee ID + Date (one row per IN, one per OUT)
+      const groups = {};
+      result.data.forEach((row) => {
+        if (!row.empId || !row.date) return;
+
+        const key = `${row.empId}_${row.date}`;
+        if (!groups[key]) {
+          groups[key] = {
+            id: `group-${row.empId}-${row.date}`,
+            name: row.name || 'Unknown',
+            empId: row.empId,
+            date: row.date,
+            inTime: '--:--',
+            outTime: '--:--',
+            workingHours: '0',
+            lateMins: '0',
+            status: 'Present',
+            location: row.locationName || 'Location NA',
+            department: row.department,
+            locationMatchIn: '',
+            locationMatchOut: '',
+          };
+        }
+
+        if (row.punchType === 'IN') {
+          groups[key].inTime = row.time || '--:--';
+          groups[key].locationMatchIn = row.locationMatchStatus || '';
+        } else if (row.punchType === 'OUT') {
+          groups[key].outTime = row.time || '--:--';
+          groups[key].locationMatchOut = row.locationMatchStatus || '';
+        }
+      });
+
+      // Convert groups object to array and calculate working hours
+      const processedData = Object.values(groups).map(group => {
+        if (group.inTime !== '--:--' && group.outTime !== '--:--') {
+          try {
+            const [h1, m1, s1] = group.inTime.split(':').map(Number);
+            const [h2, m2, s2] = group.outTime.split(':').map(Number);
+            const d1 = new Date(2000, 0, 1, h1, m1, s1 || 0);
+            const d2 = new Date(2000, 0, 1, h2, m2, s2 || 0);
+            const diffMs = d2 - d1;
+            if (diffMs > 0) {
+              group.workingHours = (diffMs / (1000 * 60 * 60)).toFixed(1);
+            }
+          } catch (e) {
+            console.error("Working hours calculation error:", e);
+          }
+        }
+        // Set status based on completion
+        if (group.inTime !== '--:--' && group.outTime !== '--:--') {
+          group.status = 'Completed';
+        } else if (group.inTime !== '--:--') {
+          group.status = 'Present';
+        } else if (group.outTime !== '--:--') {
+          group.status = 'Punch Out';
+        }
+
+        return group;
+      });
+
+      // Sort by date (descending) and name
+      processedData.sort((a, b) => {
+        if (b.date !== a.date) return b.date.localeCompare(a.date);
+        return a.name.localeCompare(b.name);
+      });
+
+      setAttendanceData(processedData);
+    } catch (err) {
+      console.error("fetchReportDailySheet error:", err);
+      setError(err.message);
+      toast.error(`Failed to load attendance logs: ${err.message}`);
+    } finally {
+      setTableLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchReportDailySheet();
+    fetchUserList();
+  }, []);
+
+  const filteredData = attendanceData.filter(item => {
+    const matchesSearch = !searchTerm || 
+      item.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      item.empId.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesName = !filterDepartment || item.name === filterDepartment;
+
+    const matchesDate = !filterDate || item.date === filterDate;
+
+    return matchesSearch && matchesName && matchesDate;
+  });
+
+  const departments = [...new Set(attendanceData.map(d => d.department))].sort();
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentItems = filteredData.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+
+  const paginate = (pageNumber) => {
+    setCurrentPage(pageNumber);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const renderPaginationNav = () => (
+    <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px w-full justify-center sm:w-auto">
+      <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="relative inline-flex items-center px-1.5 py-1.5 rounded-l-md border border-gray-300 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+        <ChevronRight className="h-4 w-4 rotate-180" />
+      </button>
+      {[...Array(Math.max(1, Math.min(5, totalPages)))].map((_, i) => (
+        <button key={i} onClick={() => paginate(i + 1)} className={`relative inline-flex items-center px-3 py-1.5 border text-[11px] font-bold ${currentPage === (i + 1) ? "z-10 bg-indigo-50 border-indigo-500 text-indigo-600 shadow-sm" : "bg-white border-gray-300 text-gray-500 hover:bg-gray-50"}`}>
+          {i + 1}
+        </button>
+      ))}
+      <button onClick={() => paginate(currentPage + 1)} disabled={currentPage >= totalPages} className="relative inline-flex items-center px-1.5 py-1.5 rounded-r-md border border-gray-300 bg-white text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </nav>
+  );
+
+  return (
+    <div className="max-w-full mx-auto px-1 sm:px-2 lg:px-4 py-4 space-y-4 md:space-y-6 pb-20 md:pb-8 font-outfit">
+
+      {/* 🧩 Header Section - Call Tracker Parity */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        {/* Tab Switcher - Call Tracker SPEC */}
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl font-bold text-gray-800">Attendance Log</h1>
+        </div>
+
+        {/* Filter Toolbar */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+          {/* Search bar */}
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={14} />
+            <input
+              type="text"
+              placeholder="Search calls..."
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+              className="pl-9 pr-4 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full text-[13px] shadow-sm bg-white"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 lg:flex lg:items-center gap-2">
+            {/* Name Filter */}
+            <div className="relative">
+              <div onClick={() => setIsDeptDropdownOpen(!isDeptDropdownOpen)} className="flex items-center gap-2 h-8 px-3 border border-gray-200 rounded bg-white text-[11px] text-gray-700 font-medium cursor-pointer hover:border-indigo-400 transition shadow-sm">
+                <Filter size={11} className="text-gray-400" />
+                <span className="truncate">{filterDepartment || "All Names"}</span>
+                <ChevronDown size={12} className={`ml-1 text-gray-400 transition-transform ${isDeptDropdownOpen ? 'rotate-180' : ''}`} />
+              </div>
+              {isDeptDropdownOpen && (
+                <div className="absolute top-full right-0 mt-1 w-48 max-h-60 overflow-y-auto bg-white border border-gray-200 rounded-md shadow-lg z-50 py-1 scrollbar-hide">
+                  <div onClick={() => { setFilterDepartment(""); setIsDeptDropdownOpen(false); setCurrentPage(1); }} className="px-3 py-1.5 text-[11px] font-normal cursor-pointer hover:bg-gray-50">All Names</div>
+                  {[...new Set(attendanceData.map(d => d.name))].sort().map(name => (
+                    <div key={name} onClick={() => { setFilterDepartment(name); setIsDeptDropdownOpen(false); setCurrentPage(1); }} className="px-3 py-1.5 text-[11px] font-normal cursor-pointer hover:bg-gray-50 flex items-center justify-between">
+                      {name}
+                      {filterDepartment === name && <Check size={11} className="text-indigo-500" />}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Date Picker */}
+            <div className="flex items-center gap-1 h-8 px-2 border border-gray-200 rounded bg-white text-[11px] text-gray-600 shadow-sm relative">
+              <Calendar size={11} className="text-gray-400" />
+              <input type="date" value={filterDate} onChange={(e) => { setFilterDate(e.target.value); setCurrentPage(1); }} className="bg-transparent focus:outline-none text-[10px] w-24 cursor-pointer" />
+            </div>
+
+            {/* Attendance Button */}
+            <button
+              onClick={() => {
+                const userStr = localStorage.getItem('user');
+                const user = userStr ? JSON.parse(userStr) : null;
+                const isAdmin = user && user.Admin === 'Yes';
+
+                if (user && !isAdmin) {
+                  setModalFormData({
+                    code: user.Code || '',
+                    name: user.Name || '',
+                    type: user.Type || 'Article',
+                    department: user.Department || '',
+                    punchType: 'in'
+                  });
+                } else {
+                  // If admin or no user, reset to empty form for manual selection
+                  setModalFormData({ code: '', name: '', type: 'Article', department: '', punchType: 'in' });
+                }
+                setIsModalOpen(true);
+                fetchLocation();
+                fetchUserList();
+              }}
+              className="flex items-center justify-center gap-2 h-8 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[11px] font-bold uppercase tracking-wider shadow-sm transition-all duration-200 ease-in-out hover:shadow-md active:scale-95"
+            >
+              <span>Attendance</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 📊 Main Content Area */}
+      <div className="overflow-hidden border border-gray-200 rounded-lg bg-white min-h-[530px] flex flex-col shadow-sm">
+        {tableLoading ? (
+          <div className="flex-1 flex items-center justify-center p-12">
+            <LoadingSpinner message="Retrieving logs..." minHeight="450px" />
+          </div>
+        ) : (
+          <>
+            {/* Desktop Table View */}
+            <div className="hidden md:block">
+              <div className="max-h-[calc(105vh-280px)] min-h-[530px] overflow-y-auto scrollbar-hide">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50 sticky top-0 z-10">
+                    <tr>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Employee Name</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Employee ID</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Date</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">In-Time</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Out-Time</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Net Depth</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Latency</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Status</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Location Match</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-100">
+                    {currentItems.length === 0 ? (
+                      <tr>
+                        <td colSpan="9" className="px-6 py-24 text-center">
+                          <p className="text-gray-400 text-xs font-bold uppercase tracking-widest">No matching records found.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      currentItems.map((item) => (
+                        <tr key={item.id} className="hover:bg-gray-50/50 transition-colors group">
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-700 font-normal uppercase">
+                            {item.name}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500 font-normal uppercase tracking-tight">#{item.empId}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-xs text-gray-500 font-normal tracking-tight">{item.date}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500 font-normal">{item.inTime}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500 font-normal">{item.outTime}</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-indigo-600 font-normal">{item.workingHours}h</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-rose-500 font-normal">+{item.lateMins}m</td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium ${item.status === 'Present' ? 'bg-green-100 text-green-700' : (item.status === 'Holiday' ? 'bg-indigo-100 text-indigo-700' : 'bg-red-100 text-red-700')}`}>
+                              {item.status}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            {(() => {
+                              const matched = item.locationMatchIn === 'Location Matched' || item.locationMatchOut === 'Location Matched';
+                              return (
+                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium ${matched ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                  {matched ? 'Location Matched' : 'Not Matched'}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Desktop Pagination */}
+              <div className="px-4 py-3 bg-white border-t border-gray-200 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-6 flex-wrap">
+                  <p className="text-[13px] text-gray-600 font-medium tracking-wide">
+                    Showing <span className="font-bold text-gray-900">{filteredData.length > 0 ? indexOfFirstItem + 1 : 0}</span> to <span className="font-bold text-gray-900">{Math.min(indexOfLastItem, filteredData.length)}</span> of <span className="font-bold text-gray-900">{filteredData.length}</span> records
+                  </p>
+                  <div className="flex items-center gap-2 h-5">
+                    <label className="text-[13px] text-gray-500 font-medium whitespace-nowrap">Rows per page:</label>
+                    <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="text-xs bg-transparent font-medium text-gray-700 outline-none cursor-pointer">
+                      {[15, 30, 50, 100].map(val => <option key={val} value={val}>{val}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex items-center w-auto justify-end">
+                  {renderPaginationNav()}
+                </div>
+              </div>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="md:hidden flex flex-col h-[calc(105vh-320px)] bg-slate-50">
+              <div className="flex-1 p-2 space-y-3 overflow-y-auto scrollbar-hide">
+                {currentItems.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-24 text-center">
+                    <p className="text-gray-400 text-xs font-bold uppercase tracking-widest italic">No records found</p>
+                  </div>
+                ) : (
+                  currentItems.map((item) => (
+                    <div key={item.id} className="bg-white rounded-2xl shadow-sm border border-gray-200/60 p-4 space-y-3 relative overflow-hidden group active:bg-slate-50 transition-colors">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <p className="text-[13px] font-black text-slate-800 uppercase tracking-tight">{item.name}</p>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">#{item.empId}</p>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${item.status === 'Present' ? 'bg-emerald-50 text-emerald-600' :
+                            (item.status === 'Holiday' ? 'bg-indigo-50 text-indigo-600' : 'bg-rose-50 text-rose-600')
+                          }`}>
+                          {item.status}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 bg-slate-50/80 p-3 rounded-xl border border-slate-100">
+                        <div className="space-y-0.5">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">In-Time</p>
+                          <p className="text-[11px] font-bold text-slate-700">{item.inTime || '—'}</p>
+                        </div>
+                        <div className="space-y-0.5 text-right">
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Out-Time</p>
+                          <p className="text-[11px] font-bold text-slate-700">{item.outTime || '—'}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center gap-1.5">
+                          <Clock size={12} className="text-slate-300" />
+                          <span className="text-[11px] font-black text-slate-400 uppercase">{item.date}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-black text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-lg">{item.workingHours}h</span>
+                          <span className="text-[11px] font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-lg">+{item.lateMins}m</span>
+                        </div>
+                      </div>
+
+                      {(() => {
+                        const matched = item.locationMatchIn === 'Location Matched' || item.locationMatchOut === 'Location Matched';
+                        return (
+                          <div className="flex items-center justify-between pt-1 border-t border-slate-50">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Location Match</span>
+                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${matched ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>
+                              {matched ? 'Location Matched' : 'Not Matched'}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="border-t border-gray-200 bg-white px-2 py-3 flex justify-center sticky bottom-0">
+                {renderPaginationNav()}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Full Screen Attendance Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-300 font-outfit">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col border border-gray-100 relative">
+
+            {/* Header */}
+            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-white shadow-lg shadow-indigo-100">
+                  <Plus size={20} />
+                </div>
+                <h2 className="text-xl font-bold text-gray-800 uppercase tracking-tight">New Attendance Entry</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => { stopCamera(); setIsModalOpen(false); setCapturedImage(null); }}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-all"
+              >
+                <XCircle size={24} />
+              </button>
+            </div>
+
+            <form onSubmit={handlePunchSubmit} className="p-8 space-y-6 flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Employee ID */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Employee ID</label>
+                  {(() => {
+                    const userStr = localStorage.getItem('user');
+                    const user = userStr ? JSON.parse(userStr) : null;
+                    const isAdmin = user && user.Admin === 'Yes';
+
+                    if (user && !isAdmin) {
+                      return (
+                        <input
+                          type="text"
+                          value={modalFormData.code}
+                          readOnly
+                          className="h-11 px-4 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 focus:outline-none shadow-sm cursor-not-allowed"
+                        />
+                      );
+                    } else {
+                      return (
+                        <select
+                          value={modalFormData.code}
+                          onChange={handleCodeChange}
+                          className="h-11 px-4 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
+                          required
+                        >
+                          <option value="">Select Employee ID</option>
+                          {userList.map((user, idx) => (
+                            <option key={idx} value={user.code}>{user.code}</option>
+                          ))}
+                        </select>
+                      );
+                    }
+                  })()}
+                </div>
+
+                {/* Punch Status */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Punch Status</label>
+                  <select
+                    value={modalFormData.punchType}
+                    onChange={(e) => setModalFormData({ ...modalFormData, punchType: e.target.value })}
+                    className="h-11 px-4 bg-white border border-gray-200 rounded-xl text-sm font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all shadow-sm"
+                  >
+                    <option value="in">PUNCH IN</option>
+                    <option value="out">PUNCH OUT</option>
+                  </select>
+                </div>
+
+                {/* Employee Name */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Employee Name</label>
+                  <input
+                    type="text"
+                    value={modalFormData.name}
+                    readOnly
+                    placeholder="Auto-filled"
+                    className="h-11 px-4 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 focus:outline-none shadow-sm cursor-not-allowed"
+                  />
+                </div>
+
+                {/* Department */}
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Department</label>
+                  <input
+                    type="text"
+                    value={modalFormData.department}
+                    readOnly
+                    placeholder="Auto-filled"
+                    className="h-11 px-4 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-600 focus:outline-none shadow-sm cursor-not-allowed"
+                  />
+                </div>
+              </div>
+
+              {/* Location Module */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Verification Location</label>
+                <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between gap-4 group hover:border-indigo-400 transition-all shadow-sm">
+                  <div className="flex items-start gap-3">
+                    <MapPin className="text-indigo-600 mt-1" size={18} />
+                    <div>
+                      <p className={`text-xs font-medium ${loadingLocation ? 'text-indigo-500 animate-pulse' : 'text-gray-600'}`}>
+                        {loadingLocation ? "Tracking satellites..." : (locationData.locationName || "Press button to resolve location")}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={fetchLocation}
+                    disabled={loadingLocation}
+                    className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                  >
+                    {loadingLocation ? <RotateCw size={18} className="animate-spin" /> : <MapPinned size={18} />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Camera Capture Module */}
+              <div className="space-y-4 pt-2">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Identity Authentication</label>
+
+                <div className="relative w-full aspect-[4/3] max-w-sm mx-auto bg-slate-50 border border-gray-200 rounded-2xl overflow-hidden flex flex-col items-center justify-center transition-all">
+                  {cameraActive ? (
+                    <video ref={videoRef} className="w-full h-full object-cover scale-x-[-1]" playsInline />
+                  ) : capturedImage ? (
+                    <img src={capturedImage} className="w-full h-full object-cover" alt="Captured Identity" />
+                  ) : (
+                    <div className="text-center p-8 space-y-3">
+                      <Camera className="text-gray-300 mx-auto" size={48} strokeWidth={1.5} />
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Initialization Required</p>
+                    </div>
+                  )}
+
+                  <canvas ref={canvasRef} className="hidden" />
+                  {cameraActive && (
+                    <div className="absolute top-4 right-4 flex items-center gap-2 px-3 py-1 bg-black/50 backdrop-blur-md rounded-full border border-white/20">
+                      <div className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-pulse" />
+                      <span className="text-[9px] font-black text-white uppercase tracking-widest">Active Link</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-center gap-3">
+                  {!cameraActive ? (
+                    <button
+                      type="button"
+                      onClick={startCamera}
+                      className="px-8 py-3 bg-gray-900 hover:bg-black text-white rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg"
+                    >
+                      <Camera size={14} />
+                      <span>Initialize Authentication</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={capturePhoto}
+                      className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all shadow-lg"
+                    >
+                      <CheckCircle2 size={14} />
+                      <span>Authenticate & Log</span>
+                    </button>
+                  )}
+                  {capturedImage && !cameraActive && (
+                    <button
+                      type="button"
+                      onClick={() => setCapturedImage(null)}
+                      className="p-3 bg-white border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 rounded-xl transition shadow-sm"
+                    >
+                      <RotateCw size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Submit Button */}
+              <div className="pt-4">
+                <button
+                  type="submit"
+                  disabled={isPunching}
+                  className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm uppercase tracking-widest rounded-2xl transition-all duration-300 flex items-center justify-center gap-3 shadow-xl shadow-indigo-100 disabled:opacity-50"
+                >
+                  {isPunching ? (
+                    <>
+                      <Loader2 size={20} className="animate-spin" />
+                      <span>Processing Log...</span>
+                    </>
+                  ) : (
+                    "Submit Verification Log"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+};
+
+export default AttendanceDaily;
