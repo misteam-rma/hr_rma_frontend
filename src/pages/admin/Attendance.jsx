@@ -6,12 +6,101 @@ import {
 } from "lucide-react";
 import LoadingSpinner from "../../components/LoadingSpinner";
 import toast from "react-hot-toast";
-import { fetchAttendanceMonthlyReportsApi } from "../../utils/attendanceMonthlyReportApi";
+import { fetchAttendanceLogsApi } from "../../utils/attendanceApi";
 
-// Professional Dummy Monthly History (Jan - Apr 2024)
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// IN punches at/after this time count as late. No per-employee shift time
+// exists in the system, so this is a single fixed cutoff for everyone.
+const LATE_CUTOFF_TIME = "09:30:00";
+
+const daysInMonth = (year, monthIndex) => new Date(year, monthIndex + 1, 0).getDate();
+
+// Working days = calendar days excluding Sundays. There's no holiday
+// calendar in the system, so Sundays are the only day type this can
+// account for. Days after today (for the in-progress month) are excluded
+// so absents aren't counted for days that haven't happened yet.
+const countWorkingDays = (year, monthIndex, throughDay) => {
+  let count = 0;
+  for (let day = 1; day <= throughDay; day++) {
+    if (new Date(year, monthIndex, day).getDay() !== 0) count++;
+  }
+  return count;
+};
+
+// Groups raw punch events (attendance_logs, same source AttendanceDaily.jsx
+// uses) by employee + month, then derives the monthly summary client-side —
+// this table has no producer of its own, so it's computed on read instead.
+const buildMonthlyReport = (logs) => {
+  const groups = {};
+
+  logs.forEach((log) => {
+    if (!log.empId || !log.date) return;
+    const [yearStr, monthStr] = log.date.split("-");
+    const year = Number(yearStr);
+    const monthIndex = Number(monthStr) - 1;
+    const key = `${log.empId}_${year}_${monthIndex}`;
+
+    if (!groups[key]) {
+      groups[key] = {
+        empId: log.empId,
+        name: log.name || "Unknown",
+        department: log.department || "",
+        year,
+        monthIndex,
+        days: {},
+      };
+    }
+
+    if (!groups[key].days[log.date]) groups[key].days[log.date] = {};
+    const day = groups[key].days[log.date];
+    if (log.punchType === "IN") {
+      day.in = true;
+      day.inTime = log.time;
+    } else if (log.punchType === "OUT") {
+      day.out = true;
+    }
+  });
+
+  const today = new Date();
+
+  return Object.values(groups)
+    .map((group) => {
+      const dates = Object.keys(group.days);
+      const punchDays = dates.filter((d) => group.days[d].in).length;
+      const punchMiss = dates.filter((d) => Boolean(group.days[d].in) !== Boolean(group.days[d].out)).length;
+      const lateDays = dates.filter((d) => group.days[d].in && group.days[d].inTime >= LATE_CUTOFF_TIME).length;
+
+      const isCurrentMonth = today.getFullYear() === group.year && today.getMonth() === group.monthIndex;
+      const throughDay = isCurrentMonth ? today.getDate() : daysInMonth(group.year, group.monthIndex);
+      const totalDays = countWorkingDays(group.year, group.monthIndex, throughDay);
+      const absents = Math.max(0, totalDays - punchDays);
+
+      return {
+        year: group.year,
+        monthIndex: group.monthIndex,
+        month: MONTH_NAMES[group.monthIndex],
+        empId: group.empId,
+        name: group.name,
+        department: group.department,
+        totalDays,
+        punchDays,
+        absents,
+        lateDays,
+        lateNotAllowed: 0,
+        punchMiss,
+        status: "Verified",
+      };
+    })
+    .sort((a, b) => (b.year !== a.year ? b.year - a.year : b.monthIndex - a.monthIndex || a.name.localeCompare(b.name)));
+};
+
 const Attendance = () => {
   const [attendanceData, setAttendanceData] = useState([]);
-  const [activeTab, setActiveTab] = useState("all"); 
+  const [activeTab, setActiveTab] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterDepartment, setFilterDepartment] = useState("");
   const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
@@ -23,9 +112,9 @@ const Attendance = () => {
   const fetchAttendanceData = async () => {
     setTableLoading(true);
     try {
-      const result = await fetchAttendanceMonthlyReportsApi();
-      if (!result.success) throw new Error(result.error || 'Failed to fetch monthly report');
-      setAttendanceData(result.data);
+      const result = await fetchAttendanceLogsApi();
+      if (!result.success) throw new Error(result.error || 'Failed to fetch attendance logs');
+      setAttendanceData(buildMonthlyReport(result.data));
     } catch (err) {
       console.error("fetchAttendanceData Error:", err);
       toast.error("Failed to sync monthly report");
@@ -128,7 +217,7 @@ const Attendance = () => {
                 className="h-8 px-2 border border-gray-200 rounded bg-white text-[11px] text-gray-700 font-medium outline-none shadow-sm hover:border-indigo-400 transition"
              >
                 <option value="">All Months</option>
-                {["January", "February", "March", "April", "May", "June", "July"].map(m => (
+                {MONTH_NAMES.map(m => (
                   <option key={m} value={m}>{m.toUpperCase()}</option>
                 ))}
              </select>
