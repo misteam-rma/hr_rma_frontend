@@ -6,6 +6,7 @@ import {
   IndianRupee, Car, MapPinned, Info
 } from "lucide-react";
 import LoadingSpinner from "../../components/LoadingSpinner";
+import ModalForm from "../../components/ModalForm";
 import toast from "react-hot-toast";
 import {
   fetchReimbursementClaimsApi,
@@ -390,204 +391,190 @@ const Reimbursement = () => {
         )}
       </div>
 
-      {/* Modal - Design parity with provided image */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-[100] bg-gray-900/80 backdrop-blur-sm flex justify-center items-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto flex flex-col p-6 animate-in slide-in-from-bottom duration-300">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-black text-gray-800 uppercase tracking-tight">Claim Reimbursement</h2>
-              <button onClick={() => setIsModalOpen(false)} className="p-1 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100"><XCircle size={20} /></button>
-            </div>
+      <ModalForm
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSubmit={handleSubmit}
+        title="Claim Reimbursement"
+        submitText={isSubmitting ? 'Submitting...' : 'Submit Claim'}
+        maxWidth="max-w-md"
+        maxHeight="80vh"
+      >
+        {/* Bill Month */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bill Month</label>
+          <input
+            type="month"
+            value={formData.billMonth}
+            onChange={(e) => setFormData({ ...formData, billMonth: e.target.value })}
+            className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Bill Month */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Bill Month</label>
-                <div className="relative">
-                  <input
-                    type="month"
-                    value={formData.billMonth}
-                    onChange={(e) => setFormData({ ...formData, billMonth: e.target.value })}
-                    className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                {/* Employee Code */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Employee Code</label>
-                  {isAdmin ? (
-                    <select
-                      value={formData.employeeCode}
-                      onChange={(e) => {
-                        const code = e.target.value;
-                        const emp = employeeList.find(a => a.code === code);
-                        setFormData({ 
-                          ...formData, 
-                          employeeCode: code,
-                          employeeName: emp ? emp.name : '',
-                          employeeType: emp ? emp.type : (user?.['Employee Type'] || 'Field Staff')
-                        });
-                      }}
-                      className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                      required
-                    >
-                      <option value="">Select code</option>
-                      {employeeList.map(a => <option key={a.code} value={a.code}>{a.code}</option>)}
-                    </select>
-                  ) : (
-                    <input
-                      type="text"
-                      value={formData.employeeCode}
-                      readOnly
-                      className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 outline-none"
-                    />
-                  )}
-                </div>
-
-                {/* Employee Name */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Employee Name</label>
-                  <input
-                    type="text"
-                    value={formData.employeeName}
-                    readOnly
-                    placeholder={isAdmin ? "Select code first" : ""}
-                    className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 outline-none"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                {/* Senior Code */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Senior Code</label>
-                  <select
-                    value={formData.seniorCode}
-                    onChange={handleSeniorCodeChange}
-                    className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    required
-                  >
-                    <option value="">Select code</option>
-                    {articleList.map(a => <option key={a.code} value={a.code}>{a.code}</option>)}
-                  </select>
-                </div>
-
-                {/* Senior Name */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Senior Name</label>
-                  <input
-                    type="text"
-                    value={formData.seniorName}
-                    readOnly
-                    className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 outline-none"
-                  />
-                </div>
-              </div>
-
-              {/* Vehicle Type */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Vehicle Type</label>
-                <select
-                  value={formData.vehicleType}
-                  onChange={handleVehicleChange}
-                  className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                >
-                  {vehicleOptions.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
-                </select>
-              </div>
-
-              {/* Rate */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Rate per KM</label>
-                <input
-                  type="number"
-                  value={formData.ratePerKm}
-                  onChange={(e) => setFormData({ ...formData, ratePerKm: e.target.value })}
-                  className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-
-              {/* Visits Section */}
-              <div className="space-y-3">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center justify-between">
-                  Visits (Add as needed)
-                  <Plus size={12} className="text-indigo-600 cursor-pointer" onClick={addVisit} />
-                </label>
-
-                {formData.visits.map((visit, index) => (
-                  <div key={index} className="p-3 bg-gray-50 rounded-xl border border-dashed border-gray-200 space-y-2 relative">
-                    {index > 0 && (
-                      <button onClick={() => removeVisit(index)} className="absolute -top-1 -right-1 p-1 bg-white border border-gray-200 text-rose-500 rounded-full shadow-sm">
-                        <XCircle size={14} />
-                      </button>
-                    )}
-                    <div className="flex gap-2">
-                      <input
-                        type="date"
-                        value={visit.date}
-                        onChange={(e) => updateVisit(index, 'date', e.target.value)}
-                        className="flex-1 h-9 px-2 bg-white border border-gray-200 rounded text-[11px] outline-none"
-                      />
-                      <select
-                        value={visit.place}
-                        onChange={(e) => updateVisit(index, 'place', e.target.value)}
-                        className="flex-1 h-9 px-2 bg-white border border-gray-200 rounded text-[11px] outline-none"
-                      >
-                        <option value="">Select place</option>
-                        {placeOptions.map((p, idx) => <option key={idx} value={p.label}>{p.label}</option>)}
-                      </select>
-                    </div>
-                    <input
-                      type="number"
-                      placeholder="KM"
-                      value={visit.km}
-                      onChange={(e) => updateVisit(index, 'km', e.target.value)}
-                      className="w-full h-9 px-2 bg-white border border-gray-200 rounded text-[11px] outline-none"
-                    />
-                  </div>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                onClick={addVisit}
-                className="w-full py-2 border border-dashed border-gray-300 rounded-xl text-[11px] font-bold text-gray-400 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+        <div className="grid grid-cols-2 gap-4">
+          {/* Employee Code */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Employee Code</label>
+            {isAdmin ? (
+              <select
+                value={formData.employeeCode}
+                onChange={(e) => {
+                  const code = e.target.value;
+                  const emp = employeeList.find(a => a.code === code);
+                  setFormData({
+                    ...formData,
+                    employeeCode: code,
+                    employeeName: emp ? emp.name : '',
+                    employeeType: emp ? emp.type : (user?.['Employee Type'] || 'Field Staff')
+                  });
+                }}
+                className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                required
               >
-                <Plus size={12} />
-                Add Visit
-              </button>
+                <option value="">Select code</option>
+                {employeeList.map(a => <option key={a.code} value={a.code}>{a.code}</option>)}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={formData.employeeCode}
+                readOnly
+                className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 outline-none"
+              />
+            )}
+          </div>
 
-              {/* Notes */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Notes</label>
-                <textarea
-                  rows={2}
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Optional notes..."
-                  className="w-full p-3 bg-white border border-gray-200 rounded-lg text-[13px] outline-none focus:ring-2 focus:ring-indigo-500/20"
-                />
-              </div>
-
-              {/* Totals Box */}
-              <div className="bg-indigo-50 p-4 rounded-xl border border-dashed border-indigo-200 flex justify-between items-center">
-                <div className="text-[13px] font-bold text-indigo-900">Total KM: {calculateTotalKm()}</div>
-                <div className="text-sm font-black text-indigo-950">₹ {calculateTotalAmount().toLocaleString()}</div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[13px] font-black uppercase tracking-widest shadow-lg shadow-indigo-200 transition-all active:scale-95 disabled:opacity-50"
-              >
-                {isSubmitting ? 'Submitting...' : 'Submit Claim'}
-              </button>
-            </form>
+          {/* Employee Name */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Employee Name</label>
+            <input
+              type="text"
+              value={formData.employeeName}
+              readOnly
+              placeholder={isAdmin ? "Select code first" : ""}
+              className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 outline-none"
+            />
           </div>
         </div>
-      )}
+
+        <div className="grid grid-cols-2 gap-4">
+          {/* Senior Code */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Senior Code</label>
+            <select
+              value={formData.seniorCode}
+              onChange={handleSeniorCodeChange}
+              className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+              required
+            >
+              <option value="">Select code</option>
+              {articleList.map(a => <option key={a.code} value={a.code}>{a.code}</option>)}
+            </select>
+          </div>
+
+          {/* Senior Name */}
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Senior Name</label>
+            <input
+              type="text"
+              value={formData.seniorName}
+              readOnly
+              className="w-full h-10 px-3 bg-gray-50 border border-gray-200 rounded-lg text-[13px] font-medium text-gray-500 outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Vehicle Type */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Vehicle Type</label>
+          <select
+            value={formData.vehicleType}
+            onChange={handleVehicleChange}
+            className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+          >
+            {vehicleOptions.map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+          </select>
+        </div>
+
+        {/* Rate */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Rate per KM</label>
+          <input
+            type="number"
+            value={formData.ratePerKm}
+            onChange={(e) => setFormData({ ...formData, ratePerKm: e.target.value })}
+            className="w-full h-10 px-3 bg-white border border-gray-200 rounded-lg text-[13px] font-medium text-gray-700 outline-none focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
+
+        {/* Visits Section */}
+        <div className="space-y-3">
+          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center justify-between">
+            Visits (Add as needed)
+            <Plus size={12} className="text-indigo-600 cursor-pointer" onClick={addVisit} />
+          </label>
+
+          {formData.visits.map((visit, index) => (
+            <div key={index} className="p-3 bg-gray-50 rounded-xl border border-dashed border-gray-200 space-y-2 relative">
+              {index > 0 && (
+                <button type="button" onClick={() => removeVisit(index)} className="absolute -top-1 -right-1 p-1 bg-white border border-gray-200 text-rose-500 rounded-full shadow-sm">
+                  <XCircle size={14} />
+                </button>
+              )}
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  value={visit.date}
+                  onChange={(e) => updateVisit(index, 'date', e.target.value)}
+                  className="flex-1 h-9 px-2 bg-white border border-gray-200 rounded text-[11px] outline-none"
+                />
+                <select
+                  value={visit.place}
+                  onChange={(e) => updateVisit(index, 'place', e.target.value)}
+                  className="flex-1 h-9 px-2 bg-white border border-gray-200 rounded text-[11px] outline-none"
+                >
+                  <option value="">Select place</option>
+                  {placeOptions.map((p, idx) => <option key={idx} value={p.label}>{p.label}</option>)}
+                </select>
+              </div>
+              <input
+                type="number"
+                placeholder="KM"
+                value={visit.km}
+                onChange={(e) => updateVisit(index, 'km', e.target.value)}
+                className="w-full h-9 px-2 bg-white border border-gray-200 rounded text-[11px] outline-none"
+              />
+            </div>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          onClick={addVisit}
+          className="w-full py-2 border border-dashed border-gray-300 rounded-xl text-[11px] font-bold text-gray-400 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+        >
+          <Plus size={12} />
+          Add Visit
+        </button>
+
+        {/* Notes */}
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Notes</label>
+          <textarea
+            rows={2}
+            value={formData.notes}
+            onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+            placeholder="Optional notes..."
+            className="w-full p-3 bg-white border border-gray-200 rounded-lg text-[13px] outline-none focus:ring-2 focus:ring-indigo-500/20"
+          />
+        </div>
+
+        {/* Totals Box */}
+        <div className="bg-indigo-50 p-4 rounded-xl border border-dashed border-indigo-200 flex justify-between items-center">
+          <div className="text-[13px] font-bold text-indigo-900">Total KM: {calculateTotalKm()}</div>
+          <div className="text-sm font-black text-indigo-950">₹ {calculateTotalAmount().toLocaleString()}</div>
+        </div>
+      </ModalForm>
     </div>
   );
 };
