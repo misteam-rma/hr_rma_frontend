@@ -17,9 +17,12 @@ const mapLogFromDb = (row) => ({
   time: row.punch_time, // HH:MM:SS
 });
 
-export const fetchAttendanceLogsApi = async (date) => {
+export const fetchAttendanceLogsApi = async ({ date, employeeCode } = {}) => {
   try {
-    const query = date ? `?date=${date}` : "";
+    const params = new URLSearchParams();
+    if (date) params.set("date", date);
+    if (employeeCode) params.set("employee_code", employeeCode);
+    const query = params.toString() ? `?${params.toString()}` : "";
     const response = await fetch(`${API_BASE_URL}/attendance${query}`);
     if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
     const rows = await response.json();

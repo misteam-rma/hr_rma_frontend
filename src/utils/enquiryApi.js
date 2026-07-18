@@ -27,6 +27,8 @@ const mapEnquiryFromDb = (row) => ({
   resumeCopy: row.resume_copy_url || "",
   status: row.status,
   createdAt: row.created_at,
+  historyReason: row.history_reason || "",
+  historyMovedAt: row.history_moved_at || "",
 });
 
 export const fetchEnquiriesApi = async () => {

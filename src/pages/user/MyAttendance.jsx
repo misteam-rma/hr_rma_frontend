@@ -1,10 +1,30 @@
-﻿import { useState, useEffect, useRef } from 'react';
-import { 
-  Calendar, Clock, CheckCircle, XCircle, MapPin, Plus, X, RefreshCcw, FileText,
-  Camera, RotateCw, MapPinned, CheckCircle2
+import { useState, useEffect, useRef } from 'react';
+import {
+  Calendar, Clock, CheckCircle, XCircle, MapPin, Plus, X, RefreshCcw,
+  Camera, RotateCw, MapPinned
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import { getStoredUser } from '../../utils/auth';
+import { fetchAttendanceLogsApi, createPunchApi } from '../../utils/attendanceApi';
+import { uploadFileApi } from '../../utils/uploadApi';
+
+// Converts a canvas dataURL (the captured selfie) into a File the backend upload endpoint can accept
+const dataUrlToFile = (dataUrl, filename) => {
+  const [header, base64] = dataUrl.split(",");
+  const mime = header.match(/:(.*?);/)[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+};
+
+const formatDateDMY = (isoDate) => {
+  if (!isoDate) return '-';
+  const [year, month, day] = isoDate.split('-');
+  if (!year || !month || !day) return isoDate;
+  return `${day}/${month}/${year}`;
+};
 
 const MyAttendance = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
@@ -12,18 +32,16 @@ const MyAttendance = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [attendanceData, setAttendanceData] = useState([]);
-  const [userAttendanceData, setUserAttendanceData] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const rawUser = localStorage.getItem("user");
-  const user = rawUser ? JSON.parse(rawUser) : {};
+  const user = getStoredUser() || {};
 
   const [formData, setFormData] = useState({
     code: user.Code || '',
     name: user.Name || '',
-    type: user.Type || 'Article',
-    department: user.Department || '',
+    type: user.employeeType || 'Article',
+    department: user.department || '',
     punchType: 'in',
   });
 
@@ -31,108 +49,71 @@ const MyAttendance = () => {
   const [locationData, setLocationData] = useState({ latitude: '', longitude: '', locationName: '' });
   const [cameraActive, setCameraActive] = useState(false);
   const [loadingLocation, setLoadingLocation] = useState(false);
-  const [userList, setUserList] = useState([]);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-
-  // Get user details from localStorage
-  const getUserDetails = () => {
-    try {
-      const userData = localStorage.getItem('user');
-      if (userData) {
-        return JSON.parse(userData);
-      }
-      return null;
-    } catch (error) {
-      console.error('Error parsing user data from localStorage:', error);
-      return null;
-    }
-  };
 
   const fetchAttendanceData = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(
-        `${"https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec"}?sheet=Attendance&action=fetch`
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to fetch data');
-      }
-
-      const rawData = result.data || result;
-      if (!Array.isArray(rawData) || rawData.length < 2) {
+      if (!user.Code) {
         setAttendanceData([]);
         return;
       }
 
-      const user = getUserDetails();
-      if (!user) return;
+      const result = await fetchAttendanceLogsApi({ employeeCode: user.Code });
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to fetch attendance');
+      }
 
-      // Filter rows for current user (Column C is Code, Column E is Name)
-      const userRows = rawData.slice(1).filter(row => {
-        const rowCode = row[2]?.toString().trim();
-        const rowName = row[4]?.toString().trim();
-        return (rowCode === user.Code) || (rowName?.toLowerCase() === user.Name?.toLowerCase());
-      });
-
-      // Group by Date (Column L / index 11)
+      // Group punch events (one row per IN, one per OUT) by date
       const dailyGroups = {};
-      userRows.forEach(row => {
-        const date = row[11]?.toString().trim();
-        const time = row[12]?.toString().trim();
-
-        if (!date || !time) return;
-
-        if (!dailyGroups[date]) {
-          dailyGroups[date] = { date, punches: [] };
+      result.data.forEach((row) => {
+        if (!row.date) return;
+        if (!dailyGroups[row.date]) {
+          dailyGroups[row.date] = { date: row.date, inRow: null, outRow: null };
         }
-        dailyGroups[date].punches.push({ time });
+        if (row.punchType === 'IN') dailyGroups[row.date].inRow = row;
+        else if (row.punchType === 'OUT') dailyGroups[row.date].outRow = row;
       });
 
-      // Process groups into attendance records
-      const processed = Object.values(dailyGroups).map(group => {
-        const sortedPunches = group.punches.sort((a, b) => a.time.localeCompare(b.time));
-        const checkIn = sortedPunches[0].time;
-        const checkOut = sortedPunches.length > 1 ? sortedPunches[sortedPunches.length - 1].time : '-';
-
-        // Extract metadata from the first punch row for this day
-        const firstRow = userRows.find(r => r[11]?.toString().trim() === group.date);
+      const processed = Object.values(dailyGroups).map((group) => {
+        const anchorRow = group.inRow || group.outRow;
+        const checkIn = group.inRow?.time || '-';
+        const checkOut = group.outRow?.time || '-';
 
         let workingHours = 0;
-        if (checkOut !== '-') {
+        if (checkIn !== '-' && checkOut !== '-') {
           const [h1, m1, s1] = checkIn.split(':').map(Number);
           const [h2, m2, s2] = checkOut.split(':').map(Number);
           const d1 = new Date(2000, 0, 1, h1, m1, s1 || 0);
           const d2 = new Date(2000, 0, 1, h2, m2, s2 || 0);
-          workingHours = (d2 - d1) / (1000 * 60 * 60);
+          workingHours = Math.max(0, (d2 - d1) / (1000 * 60 * 60));
         }
 
+        const mapRow = group.inRow?.latitude ? group.inRow : group.outRow;
+
         return {
-          'Date': group.date,
+          Date: group.date, // ISO YYYY-MM-DD, formatted for display via formatDateDMY
           'Check In': checkIn,
           'Check Out': checkOut,
           'Working Hours': workingHours.toFixed(2),
           'Overtime Hours': Math.max(0, workingHours - 8).toFixed(2),
-          'Status': 'Present',
-          'Dept': firstRow[5],
-          'Type': firstRow[3],
-          'Location': firstRow[10],
-          'Photo': firstRow[7],
-          'Link': firstRow[13]
+          Status: 'Present',
+          Dept: anchorRow?.department || '',
+          Type: anchorRow?.type || '',
+          Location: anchorRow?.locationName || '',
+          Photo: anchorRow?.photoUrl || '',
+          Link: mapRow?.latitude && mapRow?.longitude
+            ? `https://www.google.com/maps?q=${mapRow.latitude},${mapRow.longitude}`
+            : '',
         };
       });
 
+      processed.sort((a, b) => b.Date.localeCompare(a.Date));
       setAttendanceData(processed);
-
     } catch (error) {
       console.error('Error fetching attendance:', error);
       setError(error.message);
@@ -141,20 +122,12 @@ const MyAttendance = () => {
     }
   };
 
-  useEffect(() => {
-    if (attendanceData.length > 0) {
-      setUserAttendanceData([...attendanceData].reverse());
-    }
-  }, [attendanceData]);
-
-  const filteredAttendance = userAttendanceData.filter(record => {
-    const dateValue = record.Date || '';
-    if (!dateValue) return false;
-    try {
-      const parts = dateValue.split('/');
-      const recordDate = new Date(parts[2], parts[1] - 1, parts[0]);
-      return recordDate.getMonth() === selectedMonth && recordDate.getFullYear() === selectedYear;
-    } catch (e) { return true; }
+  const filteredAttendance = attendanceData.filter(record => {
+    const iso = record.Date || '';
+    if (!iso) return false;
+    const [year, month] = iso.split('-').map(Number);
+    if (!year || !month) return true;
+    return (month - 1) === selectedMonth && year === selectedYear;
   });
 
   const presentDays = filteredAttendance.filter(record => record.Status === 'Present').length;
@@ -183,34 +156,8 @@ const MyAttendance = () => {
 
   useEffect(() => {
     fetchAttendanceData();
-    fetchUserList();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const fetchUserList = async () => {
-    try {
-      const response = await fetch(`${"https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec"}?sheet=USER&action=fetch`);
-      const result = await response.json();
-      const rawData = result.data || result;
-      if (Array.isArray(rawData) && rawData.length > 0) {
-        let headerRowIndex = 0;
-        for (let i = 0; i < Math.min(rawData.length, 10); i++) {
-          const row = rawData[i];
-          if (row && row.some(cell => cell && (cell.toString().toLowerCase().includes('code') || cell.toString().toLowerCase().includes('serial')))) {
-            headerRowIndex = i;
-            break;
-          }
-        }
-        const dataRows = rawData.slice(headerRowIndex + 1);
-        const processedUsers = dataRows.map(row => ({
-          code: row[6]?.toString().trim() || "",
-          name: row[2]?.toString().trim() || "",
-          type: row[3]?.toString().trim() || "",
-          department: row[10]?.toString().trim() || ""
-        })).filter(u => u.code && u.code !== "Code");
-        setUserList(processedUsers);
-      }
-    } catch (err) { console.error("fetchUserList Error:", err); }
-  };
 
   const startCamera = async () => {
     try {
@@ -278,158 +225,57 @@ const MyAttendance = () => {
 
   const handleFormChange = (e) => {
     const { name, value } = e.target;
-    if (name === 'code') {
-      const employee = userList.find(u => u.code === value);
-      if (employee) {
-        setFormData(prev => ({ ...prev, code: value, name: employee.name, type: employee.type || 'Article', department: employee.department }));
-        toast.success(`Identified: ${employee.name}`);
-      } else {
-        setFormData(prev => ({ ...prev, code: value, name: '', type: 'Article', department: '' }));
-      }
-    } else {
-      setFormData(prev => ({ ...prev, [name]: value }));
-    }
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
   const handleFormSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.code || !formData.name) return toast.error("Please select valid employee code");
+    if (!formData.code || !formData.name) {
+      return toast.error("Employee details are missing. Please log in again.");
+    }
+    if (!capturedImage) {
+      return toast.error("Selfie is mandatory");
+    }
+    if (!locationData.latitude) {
+      return toast.error("Location is mandatory");
+    }
 
     setSubmitting(true);
-    const loadingToast = toast.loading('Syncing and submitting attendance...');
+    const loadingToast = toast.loading('Submitting attendance...');
 
     try {
-      // 1. Fetch fresh data for validation and serial calculation
-      const fetchRes = await fetch(`${"https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec"}?sheet=Attendance&action=fetch`);
-      const fetchResult = await fetchRes.json();
-      const existingData = fetchResult.success ? (fetchResult.data || fetchResult) : [];
+      // 1. Upload the selfie to the backend's local-disk upload endpoint
+      const photoFile = dataUrlToFile(
+        capturedImage,
+        `Attendance_${formData.code}_${formData.punchType.toUpperCase()}_${Date.now()}.jpg`
+      );
+      const photoUrl = await uploadFileApi(photoFile, "attendance");
 
-      const now = new Date();
-      const pad = (n) => String(n).padStart(2, '0');
-      const dateStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}`;
-      const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-
-      // Find if there's an active session for today in fresh data
-      const userTodayRows = existingData.slice(1).filter(row => {
-        return row[2]?.toString().trim() === formData.code && row[11]?.toString().trim() === dateStr;
+      // 2. Submit the punch — the backend validates IN/OUT sequencing for
+      // today (active session / already completed) and rejects with 409
+      await createPunchApi({
+        employeeCode: formData.code,
+        employeeName: formData.name,
+        employeeType: formData.type || 'Article',
+        department: formData.department,
+        punchType: formData.punchType.toUpperCase(),
+        photoUrl,
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+        locationName: locationData.locationName,
       });
 
-      const hasIn = userTodayRows.some(row => {
-        const val = row[6]?.toString().trim().toUpperCase();
-        return val === 'IN' || val === 'PUNCH IN';
-      });
-      const hasOut = userTodayRows.some(row => {
-        const val = row[6]?.toString().trim().toUpperCase();
-        return val === 'OUT' || val === 'PUNCH OUT';
-      });
-
-      if (formData.punchType === 'out') {
-        if (!hasIn) {
-          setSubmitting(false);
-          return toast.error("Access Denied: You must PUNCH IN first for today.", { id: loadingToast });
-        }
-        if (hasOut) {
-          setSubmitting(false);
-          return toast.error("Already Punched Out: Your daily shift log is already complete.", { id: loadingToast });
-        }
-      } else if (formData.punchType === 'in') {
-        if (hasIn) {
-          if (!hasOut) {
-            setSubmitting(false);
-            return toast.error("Active Session: You are already Punched In. Please Punch Out first.", { id: loadingToast });
-          } else {
-            setSubmitting(false);
-            return toast.error("Shift Completed: You have already Punched In and Out for today.", { id: loadingToast });
-          }
-        }
-      }
-
-      if (!capturedImage) {
-        setSubmitting(false);
-        return toast.error("Selfie is mandatory", { id: loadingToast });
-      }
-      if (!locationData.latitude) {
-        setSubmitting(false);
-        return toast.error("Location is mandatory", { id: loadingToast });
-      }
-
-      // 2. Upload image
-      const folderId = formData.punchType === 'in' 
-        ? import.meta.env.VITE_GOOGLE_DRIVE_ATTENDANCE_IN_FOLDER_ID 
-        : import.meta.env.VITE_GOOGLE_DRIVE_ATTENDANCE_OUT_FOLDER_ID;
-
-      const uploadRes = await fetch("https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec", {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          action: 'uploadFile',
-          base64Data: capturedImage,
-          fileName: `Attendance_${formData.code}_${formData.punchType.toUpperCase()}_${Date.now()}.jpg`,
-          mimeType: 'image/jpeg',
-          folderId: folderId || ""
-        })
-      });
-      const uploadResult = await uploadRes.json();
-      if (!uploadResult.success) throw new Error(uploadResult.error || "Image upload failed");
-
-      const fileId = uploadResult.fileUrl.split('id=')[1];
-      const imageUrl = fileId ? `https://drive.google.com/file/d/${fileId}/view?usp=sharing` : uploadResult.fileUrl;
-
-      // 3. (Optional: Update logic removed per user request)
-
-      let maxSerial = 0;
-      if (Array.isArray(existingData) && existingData.length > 1) {
-        existingData.slice(1).forEach(row => {
-          const sn = parseInt(row[1]);
-          if (!isNaN(sn) && sn > maxSerial) maxSerial = sn;
-        });
-      }
-      const nextSerial = maxSerial + 1;
-
-      // 4. Insert Row
-      const timestamp = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()} ${now.getHours()}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
-
-      const rowData = [
-        timestamp,
-        nextSerial,
-        formData.code,
-        formData.type || 'Article',
-        formData.name,
-        formData.department,
-        formData.punchType.toLowerCase() === 'in' ? 'Punch In' : 'Punch Out',
-        imageUrl,
-        locationData.latitude,
-        locationData.longitude,
-        locationData.locationName,
-        dateStr,
-        timeStr,
-        `https://www.google.com/maps?q=${locationData.latitude},${locationData.longitude}`,
-        now.toLocaleString('en-US', { month: 'long' })
-      ];
-
-      const res = await fetch("https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ action: "insert", sheetName: "Attendance", rowData: JSON.stringify(rowData) })
-      });
-      const result = await res.json();
-
-      if (result.success) {
-        toast.success(`Punched ${formData.punchType.toUpperCase()} successfully!`, { id: loadingToast });
-        setShowForm(false);
-        setCapturedImage(null);
-        setLocationData({ latitude: '', longitude: '', locationName: '' });
-        setFormData({ 
-          code: user.Code || '',
-          name: user.Name || '',
-          type: user.Type || 'Article',
-          department: user.Department || '',
-          punchType: 'in' 
-        });
-        fetchAttendanceData();
-      } else { throw new Error(result.error || 'Punch failed'); }
-    } catch (error) { toast.error(error.message || 'Submission failed', { id: loadingToast });
-    } finally { setSubmitting(false); }
+      toast.success(`Punched ${formData.punchType.toUpperCase()} successfully!`, { id: loadingToast });
+      setShowForm(false);
+      setCapturedImage(null);
+      setLocationData({ latitude: '', longitude: '', locationName: '' });
+      setFormData(prev => ({ ...prev, punchType: 'in' }));
+      fetchAttendanceData();
+    } catch (error) {
+      toast.error(error.message || 'Submission failed', { id: loadingToast });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -511,7 +357,7 @@ const MyAttendance = () => {
       {showForm && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl animate-in zoom-in duration-300 overflow-hidden border border-gray-200 flex flex-col max-h-[95vh]">
-            
+
             <div className="px-6 py-4 border-b border-gray-100 bg-gray-50 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-indigo-600 rounded flex items-center justify-center text-white shadow-lg shadow-indigo-100">
@@ -650,7 +496,7 @@ const MyAttendance = () => {
                   return (
                     <tr key={index} className="hover:bg-gray-50 transition-colors group">
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <p className="text-sm font-bold text-gray-800">{record.Date || '-'}</p>
+                        <p className="text-sm font-bold text-gray-800">{formatDateDMY(record.Date)}</p>
                         <span className={`mt-1 px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-tighter bg-${color}-100 text-${color}-700 inline-block`}>
                           {record.Status}
                         </span>

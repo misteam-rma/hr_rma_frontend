@@ -314,11 +314,16 @@ const FindEnquiry = () => {
     return `${day}/${month}/${year}`;
   };
 
-  // An indent is "pending" until a candidate enquiry has been logged against it
-  const enquiredIndentIds = new Set(enquiryData.map((item) => item.indentId).filter(Boolean));
+  // An indent stays "pending" until it is closed out: either a candidate enquiry
+  // against it was marked Completed, or enough candidates have joined to fill
+  // its Number of Posts. The backend stamps a history_reason on every enquiry
+  // row for the indent once that happens (see enquiry.controller.js).
+  const closedIndentIds = new Set(
+    enquiryData.filter((item) => item.historyReason).map((item) => item.indentId).filter(Boolean)
+  );
 
   const filteredPendingData = indentData.filter((item) => {
-    if (enquiredIndentIds.has(item.id)) return false;
+    if (closedIndentIds.has(item.id)) return false;
 
     const matchesSearch =
       item.post?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -339,6 +344,8 @@ const FindEnquiry = () => {
   });
 
   const filteredHistoryData = enquiryData.filter((item) => {
+    if (!item.historyReason) return false;
+
     const matchesSearch =
       item.candidateName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.candidateEnquiryNo?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -742,18 +749,20 @@ const FindEnquiry = () => {
                           <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Gender</th>
                           <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Address</th>
                           <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Aadhar</th>
+                          <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Moved to History Reason</th>
+                          <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">Moved At</th>
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-100">
                         {tableLoading ? (
                           <tr>
-                            <td colSpan="19" className="px-4 py-1">
+                            <td colSpan="22" className="px-4 py-1">
                               <LoadingSpinner message="Retrieving history..." minHeight="300px" />
                             </td>
                           </tr>
                         ) : filteredHistoryData.length === 0 ? (
                           <tr>
-                            <td colSpan="19" className="px-4 py-12 text-center text-gray-400 text-xs font-medium">No enquiry history found.</td>
+                            <td colSpan="22" className="px-4 py-12 text-center text-gray-400 text-xs font-medium">No enquiry history found.</td>
                           </tr>
                         ) : (
                           currentItems.map((item, index) => (
@@ -788,6 +797,18 @@ const FindEnquiry = () => {
                               <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">{item.gender || "—"}</td>
                               <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500 max-w-[200px] truncate">{item.presentAddress}</td>
                               <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500 tracking-tighter">{item.aadharNumber}</td>
+                              <td className="px-6 py-4 text-center align-middle">
+                                {item.historyReason ? (
+                                  <span className="inline-flex max-w-[200px] items-center justify-center rounded bg-emerald-50 border border-emerald-100 px-2 py-1 text-[10px] font-semibold leading-snug text-emerald-700 whitespace-normal break-words">
+                                    {item.historyReason}
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-300 text-xs">—</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4 whitespace-nowrap text-center text-xs text-gray-500 align-middle">
+                                {item.historyMovedAt ? new Date(item.historyMovedAt).toLocaleString() : "—"}
+                              </td>
                             </tr>
                           ))
                         )}
@@ -862,6 +883,12 @@ const FindEnquiry = () => {
                               <div className="flex gap-2">
                                 <span className="text-indigo-400 font-bold uppercase text-[9px] shrink-0">Gender:</span>
                                 <span className="text-indigo-600 font-medium">{item.gender}</span>
+                              </div>
+                            )}
+                            {item.historyReason && (
+                              <div className="flex gap-2 pt-1 border-t border-gray-50 mt-1">
+                                <span className="text-emerald-500 font-bold uppercase text-[9px] shrink-0">Moved:</span>
+                                <span className="text-emerald-700 font-medium leading-tight">{item.historyReason}</span>
                               </div>
                             )}
                           </div>
