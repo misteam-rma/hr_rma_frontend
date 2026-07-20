@@ -904,7 +904,7 @@ This indent requires your attention.
                   <thead className="bg-gray-50 sticky top-0 z-10">
                     <tr>
                       <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                        Action
+                        Status
                       </th>
                       <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                         Indent Number
@@ -960,14 +960,15 @@ This indent requires your attention.
                       currentItems.map((item, index) => (
                         <tr key={index} className="hover:bg-gray-50">
                           <td className="px-6 py-4 whitespace-nowrap text-center">
-                            <div className="flex gap-2 justify-center">
-                              <button
-                                onClick={() => handleShareClick(item)}
-                                className="bg-green-600 px-3 py-1 rounded-md text-white text-xs hover:bg-green-700 transition-colors"
-                              >
-                                Share
-                              </button>
-                            </div>
+                            <span
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                item.status === "Completed"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-amber-100 text-amber-700"
+                              }`}
+                            >
+                              {item.status === "Completed" ? "Completed" : "Pending"}
+                            </span>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
                             {item.indentNumber}
@@ -1068,7 +1069,18 @@ This indent requires your attention.
                           <div className="w-1 h-3 bg-indigo-600 rounded-full"></div>
                           <span className="font-black text-indigo-600 text-xs tracking-tighter uppercase">{item.indentNumber}</span>
                         </div>
-                        <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider">{item.department}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                              item.status === "Completed"
+                                ? "bg-emerald-100 text-emerald-700"
+                                : "bg-amber-100 text-amber-700"
+                            }`}
+                          >
+                            {item.status === "Completed" ? "Completed" : "Pending"}
+                          </span>
+                          <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider">{item.department}</span>
+                        </div>
                       </div>
 
                       {/* Main Post Section */}

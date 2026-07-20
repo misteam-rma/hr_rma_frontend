@@ -17,6 +17,7 @@ const mapIndentFromDb = (row) => ({
   socialSiteTypes: Array.isArray(row.social_site_types)
     ? row.social_site_types.join(", ")
     : row.social_site_types || "",
+  status: row.status || "Pending",
 });
 
 export const fetchIndentsApi = async () => {
