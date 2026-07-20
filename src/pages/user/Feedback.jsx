@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageSquare, Plus, FileUp, X, CheckCircle, RefreshCcw } from 'lucide-react';
+import { MessageSquare, Plus, FileUp, X, CheckCircle, RefreshCcw, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import BulkImportModal from '../../components/BulkImportModal';
 import { fetchFeedbackApi, createFeedbackApi, updateFeedbackStatusApi } from '../../utils/feedbackApi';
 import { fetchUsersApi } from '../../utils/userApi';
 import { uploadFileApi } from '../../utils/uploadApi';
+import { findValue } from '../../utils/importHelpers';
+
+const FEEDBACK_IMPORT_COLUMNS = ['Name', 'Email', 'Mobile No', 'Problem', 'Description', 'Suggestion'];
 
 const Feedback = () => {
   const rawUser = localStorage.getItem("user");
@@ -14,6 +18,7 @@ const Feedback = () => {
   const [feedbackData, setFeedbackData] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [employees, setEmployees] = useState([]);
   const fileInputRef = useRef(null);
 
@@ -182,6 +187,30 @@ const Feedback = () => {
     }
   };
 
+  const processFeedbackImportRow = async (row) => {
+    const name = findValue(row, ['Name']);
+    const problem = findValue(row, ['Problem']);
+    const description = findValue(row, ['Description']);
+
+    if (!name || !problem || !description) {
+      throw new Error('Missing required fields');
+    }
+
+    const email = findValue(row, ['Email']) || '';
+    const mobileNo = findValue(row, ['Mobile No', 'Mobile', 'Phone']) || '';
+    const suggestion = findValue(row, ['Suggestion']) || '';
+
+    await createFeedbackApi({
+      name: String(name),
+      email: String(email),
+      mobileNo: String(mobileNo),
+      problem: String(problem),
+      description: String(description),
+      suggestion: String(suggestion),
+      screenshotUrl: '',
+    });
+  };
+
   const filteredData = feedbackData.filter(item => {
     if (activeTab === 'pending') return item.isPending;
     if (activeTab === 'history') return item.isHistory;
@@ -209,6 +238,13 @@ const Feedback = () => {
             title="Refresh"
           >
             <RefreshCcw size={20} className={tableLoading ? 'animate-spin' : ''} />
+          </button>
+          <button
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center justify-center gap-2 px-3 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+          >
+            <Upload size={16} />
+            <span className="hidden sm:inline">Bulk Import</span>
           </button>
           {!showForm && (
             <button
@@ -609,6 +645,15 @@ const Feedback = () => {
           </div>
         </div>
       )}
+
+      <BulkImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        title="Bulk Import Feedback"
+        columns={FEEDBACK_IMPORT_COLUMNS}
+        processRow={processFeedbackImportRow}
+        onImported={fetchFeedbackData}
+      />
     </div>
   );
 };

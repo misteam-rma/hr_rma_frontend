@@ -1,15 +1,22 @@
 ﻿import React, { useState, useEffect } from 'react';
-import { 
-  Search, X, Plus, Calendar, User, Briefcase, CheckCircle2, 
-  XCircle, Clock, Filter, ChevronRight, FileText, Download, 
-  ChevronLeft, History, Check, ChevronDown
+import {
+  Search, X, Plus, Calendar, User, Briefcase, CheckCircle2,
+  XCircle, Clock, Filter, ChevronRight, FileText, Download,
+  ChevronLeft, History, Check, ChevronDown, Upload
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import BulkImportModal from '../../components/BulkImportModal';
 import useAuthStore from '../../store/authStore';
 import { fetchLeavesApi, createLeaveApi, updateLeaveStatusApi } from '../../utils/leaveManagementApi';
 import { fetchUsersApi } from '../../utils/userApi';
 import { fetchHodsApi } from '../../utils/hodMasterApi';
+import { findValue } from '../../utils/importHelpers';
+
+const LEAVE_IMPORT_COLUMNS = [
+  'Employee Code', 'Employee Name', 'Department', 'Leave Type', 'Reason',
+  'Start Date (YYYY-MM-DD)', 'End Date (YYYY-MM-DD)', 'Approve By'
+];
 
 const LeaveManagement = () => {
   const user = useAuthStore(state => state.user);
@@ -23,6 +30,7 @@ const LeaveManagement = () => {
   const [selectedRow, setSelectedRow] = useState(null);
   const [activeTab, setActiveTab] = useState("pending");
   const [showModal, setShowModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [showActionModal, setShowActionModal] = useState(false);
   const [selectedLeave, setSelectedLeave] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -159,6 +167,37 @@ const LeaveManagement = () => {
     }
   };
 
+  const processLeaveImportRow = async (row) => {
+    const employeeId = findValue(row, ['Employee Code', 'Employee ID', 'Code']);
+    const startDate = findValue(row, ['Start Date']);
+    const endDate = findValue(row, ['End Date']);
+
+    if (!employeeId || !startDate || !endDate) {
+      throw new Error('Missing required fields');
+    }
+
+    const emp = employeeList.find(e => e.id === String(employeeId));
+    const employeeName = findValue(row, ['Employee Name', 'Name']) || emp?.name || '';
+    const department = findValue(row, ['Department', 'Dept']) || emp?.dept || '';
+    const leaveType = findValue(row, ['Leave Type']) || 'Casual Leave';
+    const reason = findValue(row, ['Reason']) || '';
+    const approveBy = findValue(row, ['Approve By', 'Approver']) || '';
+
+    await createLeaveApi({
+      employeeId: String(employeeId),
+      employeeName: String(employeeName),
+      employeeCode: String(employeeId),
+      employeeType: emp?.type || '',
+      department: String(department),
+      leaveType: String(leaveType),
+      reason: String(reason),
+      startDate: String(startDate),
+      endDate: String(endDate),
+      approveBy: String(approveBy),
+      remarks: '',
+    });
+  };
+
   const getDisplayLeaves = () => {
     const leaves = activeTab === 'pending' ? pendingLeaves : approvedLeaves;
     return leaves.filter(l => 
@@ -261,7 +300,15 @@ const LeaveManagement = () => {
             />
           </div>
 
-          <button 
+          <button
+             onClick={() => setShowImportModal(true)}
+             className="h-8 px-4 border border-gray-200 bg-white text-gray-600 rounded text-[11px] font-bold uppercase tracking-widest hover:bg-gray-50 transition flex items-center gap-2 shadow-sm active:scale-95"
+          >
+             <Upload size={14} />
+             Bulk Import
+          </button>
+
+          <button
              onClick={() => setShowModal(true)}
              className="h-8 px-4 bg-indigo-600 text-white rounded text-[11px] font-bold uppercase tracking-widest hover:bg-indigo-700 transition flex items-center gap-2 shadow-sm active:scale-95"
           >
@@ -553,6 +600,15 @@ const LeaveManagement = () => {
             </div>
         </div>
       )}
+
+      <BulkImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        title="Bulk Import Leave Requests"
+        columns={LEAVE_IMPORT_COLUMNS}
+        processRow={processLeaveImportRow}
+        onImported={fetchLeaveData}
+      />
     </div>
   );
 };

@@ -3,10 +3,11 @@ import {
   Search, Calendar, Filter, Clock, CheckCircle2,
   XCircle, ChevronRight, History, Download, MapPin,
   Plus, Trash2, FileText, ChevronDown, Check,
-  IndianRupee, Car, MapPinned, Info
+  IndianRupee, Car, MapPinned, Info, Upload
 } from "lucide-react";
 import LoadingSpinner from "../../components/LoadingSpinner";
 import ModalForm from "../../components/ModalForm";
+import BulkImportModal from "../../components/BulkImportModal";
 import toast from "react-hot-toast";
 import {
   fetchReimbursementClaimsApi,
@@ -14,6 +15,13 @@ import {
   createReimbursementClaimApi,
 } from "../../utils/reimbursementApi";
 import { fetchUsersApi } from "../../utils/userApi";
+import { findValue } from "../../utils/importHelpers";
+
+const REIMBURSEMENT_IMPORT_COLUMNS = [
+  'Bill Month (YYYY-MM)', 'Employee Code', 'Employee Name', 'Senior Code',
+  'Senior Name', 'Vehicle Type', 'Rate Per KM', 'Visit Date (YYYY-MM-DD)',
+  'Visit Place', 'Visit KM', 'Notes'
+];
 
 // Fixed columns for the desktop table — the backend returns clean, known
 // field names, so there's no need to sniff sheet headers at runtime anymore.
@@ -45,6 +53,7 @@ const Reimbursement = () => {
   const [itemsPerPage, setItemsPerPage] = useState(15);
   const [tableLoading, setTableLoading] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [articleList, setArticleList] = useState([]); // This will store Senior list (K/L)
   const [employeeList, setEmployeeList] = useState([]); // This will store Employee list (I/J)
@@ -213,6 +222,37 @@ const Reimbursement = () => {
     }
   };
 
+  const processReimbursementImportRow = async (row) => {
+    const employeeCode = findValue(row, ['Employee Code']);
+    const employeeName = findValue(row, ['Employee Name']);
+    const seniorCode = findValue(row, ['Senior Code']);
+    const seniorName = findValue(row, ['Senior Name']) || '';
+    const vehicleType = findValue(row, ['Vehicle Type']) || '2 Wheeler';
+    const ratePerKm = findValue(row, ['Rate Per KM', 'Rate']);
+    const visitDate = findValue(row, ['Visit Date']);
+    const visitPlace = findValue(row, ['Visit Place']);
+    const visitKm = findValue(row, ['Visit KM', 'KM']);
+    const notes = findValue(row, ['Notes']) || '';
+    const billMonth = findValue(row, ['Bill Month']) || new Date().toISOString().substring(0, 7);
+
+    if (!employeeCode || !employeeName || !seniorCode || !ratePerKm || !visitDate || !visitPlace || visitKm === undefined) {
+      throw new Error('Missing required fields');
+    }
+
+    await createReimbursementClaimApi({
+      billMonth: String(billMonth),
+      employeeCode: String(employeeCode),
+      employeeName: String(employeeName),
+      employeeType: '',
+      seniorCode: String(seniorCode),
+      seniorName: String(seniorName),
+      vehicleType: String(vehicleType),
+      ratePerKm: String(ratePerKm),
+      notes: String(notes),
+      visits: [{ date: String(visitDate), place: String(visitPlace), km: visitKm }],
+    });
+  };
+
   const filteredData = reimbursementData.filter(item => {
     const userStr = localStorage.getItem('user');
     const user = userStr ? JSON.parse(userStr) : {};
@@ -258,6 +298,14 @@ const Reimbursement = () => {
               className="pl-9 pr-4 py-1.5 border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full text-[13px] shadow-sm bg-white"
             />
           </div>
+
+          <button
+            onClick={() => setIsImportModalOpen(true)}
+            className="flex items-center justify-center gap-2 h-8 px-4 border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 rounded text-[11px] font-bold uppercase tracking-wider shadow-sm transition-all active:scale-95"
+          >
+            <Upload size={14} />
+            <span>Bulk Import</span>
+          </button>
 
           <button
             onClick={() => setIsModalOpen(true)}
@@ -575,6 +623,15 @@ const Reimbursement = () => {
           <div className="text-sm font-black text-indigo-950">₹ {calculateTotalAmount().toLocaleString()}</div>
         </div>
       </ModalForm>
+
+      <BulkImportModal
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        title="Bulk Import Reimbursement Claims"
+        columns={REIMBURSEMENT_IMPORT_COLUMNS}
+        processRow={processReimbursementImportRow}
+        onImported={fetchReimbursementLogs}
+      />
     </div>
   );
 };

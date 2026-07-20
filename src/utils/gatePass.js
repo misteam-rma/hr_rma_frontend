@@ -1,4 +1,6 @@
-﻿const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec";
+﻿import { fetchHodsApi } from './hodMasterApi';
+
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec";
 
 export const DEFAULT_HOD_NAMES = ['Deepak', 'Vikas', 'Dharam', 'Pratap', 'Aubhav'];
 
@@ -197,17 +199,13 @@ export const fetchGatePassEmployees = async () => {
 };
 
 export const fetchGatePassHodNames = async () => {
-  const response = await fetch(`${SCRIPT_URL}?sheet=Master&action=fetch`);
-  const result = await response.json();
+  const result = await fetchHodsApi();
 
   if (!result.success) {
     return DEFAULT_HOD_NAMES;
   }
 
-  const names = (result.data || [])
-    .slice(1)
-    .map((row) => row[0])
-    .filter(Boolean);
+  const names = result.data.map((hod) => hod.hodName).filter(Boolean);
 
   return names.length ? names : DEFAULT_HOD_NAMES;
 };

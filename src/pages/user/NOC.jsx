@@ -1,9 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, X, CheckCircle, RefreshCcw } from 'lucide-react';
+import { FileText, Plus, X, CheckCircle, RefreshCcw, Upload } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import BulkImportModal from '../../components/BulkImportModal';
 import { fetchNocApi, createNocApi, updateNocStatusApi } from '../../utils/nocApi';
 import { fetchUsersApi } from '../../utils/userApi';
+import { findValue } from '../../utils/importHelpers';
+
+const NOC_IMPORT_COLUMNS = [
+  'Code', 'Name', 'Team Head', 'Team Head Email', 'Date of Joining (YYYY-MM-DD)',
+  'Reg Under', 'Completion Date (YYYY-MM-DD)', 'Experience', 'Total Leave Taken', 'Article Email'
+];
 
 const NOC = () => {
   const rawUser = localStorage.getItem("user");
@@ -13,6 +20,7 @@ const NOC = () => {
   const [nocData, setNocData] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [activeTab, setActiveTab] = useState('pending');
   const [showApprovalModal, setShowApprovalModal] = useState(false);
   const [selectedNoc, setSelectedNoc] = useState(null);
@@ -130,6 +138,37 @@ const NOC = () => {
     }
   };
 
+  const processNocImportRow = async (row) => {
+    const name = findValue(row, ['Name']);
+    const dateOfJoining = findValue(row, ['Date of Joining', 'DOJ']);
+
+    if (!name || !dateOfJoining) {
+      throw new Error('Missing required fields');
+    }
+
+    const code = findValue(row, ['Code']) || '';
+    const teamHead = findValue(row, ['Team Head']) || '';
+    const teamHeadEmail = findValue(row, ['Team Head Email']) || '';
+    const regUnder = findValue(row, ['Reg Under', 'Reg. Under']) || '';
+    const completionDate = findValue(row, ['Completion Date']) || '';
+    const experience = findValue(row, ['Experience']) || '';
+    const totalLeaveTaken = findValue(row, ['Total Leave Taken', 'Total Leave']) || '';
+    const articleEmail = findValue(row, ['Article Email']) || '';
+
+    await createNocApi({
+      code: String(code),
+      name: String(name),
+      teamHead: String(teamHead),
+      teamHeadEmail: String(teamHeadEmail),
+      dateOfJoining: String(dateOfJoining),
+      regUnder: String(regUnder),
+      completionDate: String(completionDate),
+      experience: String(experience),
+      totalLeaveTaken: String(totalLeaveTaken),
+      articleEmail: String(articleEmail),
+    });
+  };
+
   const filteredData = nocData.filter(item => {
     if (activeTab === 'pending') return item.isPending;
     if (activeTab === 'history') return item.isHistory;
@@ -152,6 +191,9 @@ const NOC = () => {
         <div className="flex gap-2">
           <button onClick={fetchNocData} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50">
             <RefreshCcw size={15} /> Refresh
+          </button>
+          <button onClick={() => setShowImportModal(true)} className="flex items-center gap-2 px-3 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50">
+            <Upload size={15} /> Bulk Import
           </button>
           <button onClick={() => setShowForm(true)} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-700">
             <Plus size={16} /> New Request
@@ -382,6 +424,15 @@ const NOC = () => {
           )}
         </div>
       </div>
+
+      <BulkImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        title="Bulk Import NOC Requests"
+        columns={NOC_IMPORT_COLUMNS}
+        processRow={processNocImportRow}
+        onImported={fetchNocData}
+      />
     </div>
   );
 };

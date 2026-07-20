@@ -4,6 +4,9 @@ import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { useNavigate } from 'react-router-dom';
 import { fetchIndentsApi, createIndentApi } from '../../utils/indentApi';
+import { fetchDepartmentsApi } from '../../utils/departmentMasterApi';
+import { fetchPositionsApi } from '../../utils/positionMasterApi';
+import { fetchSocialSitesApi } from '../../utils/socialSiteMasterApi';
 
 const Indent = () => {
   const navigate = useNavigate();
@@ -27,6 +30,8 @@ const Indent = () => {
   const [tableLoading, setTableLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [departments, setDepartments] = useState([]);
+  const [positions, setPositions] = useState([]);
+  const [socialSiteOptions, setSocialSiteOptions] = useState([]);
   const [indentTypes, setIndentTypes] = useState([]);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
@@ -142,15 +147,6 @@ This indent requires your attention.
       const result = await response.json();
 
       if (result.success && result.data && result.data.length > 0) {
-        // Extract unique departments from Column B (index 1), skip header row
-        const deptList = result.data
-          .slice(1) // Skip header row
-          .map(row => row[1]) // Column B is index 1
-          .filter(dept => dept && dept.trim() !== '') // Remove empty values
-          .filter((dept, index, self) => self.indexOf(dept) === index); // Get unique values
-
-        setDepartments(deptList);
-
         // Extract unique indent types from Column C (index 2), skip header row
         const typeList = result.data
           .slice(1) // Skip header row
@@ -167,15 +163,6 @@ This indent requires your attention.
 
 
 
-  // Social site options
-  const socialSiteOptions = [
-    'Instagram',
-    'Facebook',
-    'LinkedIn',
-    'Referral',
-    'Job Consultancy',
-  ];
-
   const loadIndents = async () => {
     setTableLoading(true);
     const result = await fetchIndentsApi();
@@ -187,10 +174,29 @@ This indent requires your attention.
     setTableLoading(false);
   };
 
+  const loadMasterOptions = async () => {
+    const [deptResult, positionResult, socialSiteResult] = await Promise.all([
+      fetchDepartmentsApi(),
+      fetchPositionsApi(),
+      fetchSocialSitesApi(),
+    ]);
+
+    if (deptResult.success) {
+      setDepartments(deptResult.data.map(d => d.departmentName));
+    }
+    if (positionResult.success) {
+      setPositions(positionResult.data.map(p => p.positionName));
+    }
+    if (socialSiteResult.success) {
+      setSocialSiteOptions(socialSiteResult.data.map(s => s.siteName));
+    }
+  };
+
   useEffect(() => {
     const loadData = async () => {
       await loadIndents();
       await fetchMasterData();
+      await loadMasterOptions();
     };
     loadData();
   }, []);
@@ -279,7 +285,7 @@ This indent requires your attention.
 
   const fillDummyData = () => {
     setFormData({
-      post: 'Software Engineer',
+      post: positions[0] || '',
       indentType: indentTypes[0] || '',
       gender: 'Any',
       department: departments[0] || '',
@@ -559,15 +565,18 @@ This indent requires your attention.
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Post *
                 </label>
-                <input
-                  type="text"
+                <select
                   name="post"
                   value={formData.post}
                   onChange={handleInputChange}
                   className="w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Enter post title"
                   required
-                />
+                >
+                  <option value="">Select Post</option>
+                  {positions.map((position, index) => (
+                    <option key={index} value={position}>{position}</option>
+                  ))}
+                </select>
               </div>
 
 

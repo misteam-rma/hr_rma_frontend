@@ -2,6 +2,7 @@
 import { Plus, Filter, X, Clock, Search, RotateCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import { fetchHodsApi } from '../../utils/hodMasterApi';
 
 const LeaveRequest = () => {
   const employeeId = localStorage.getItem("employeeId");
@@ -32,37 +33,11 @@ const LeaveRequest = () => {
   });
 
   const fetchHodNames = async () => {
-    try {
-      const response = await fetch(
-        `${"https://script.google.com/macros/s/AKfycbwGN0L4CqcZdhgie3l94KGGjWHqaL_cHRgwtw1CCUZy6yqpF5lFlFNBbO10dEm7BNK6FQ/exec"}?sheet=Master&action=fetch`
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Failed to fetch HOD data');
-      }
-
-      const rawData = result.data || result;
-
-      if (!Array.isArray(rawData)) {
-        throw new Error('Expected array data not received');
-      }
-
-      // Skip the header row and get all unique names from Column K (index 10)
-      const hodData = rawData.slice(1)
-        .map(row => row[10]?.toString().trim() || '')
-        .filter(name => name);
-      
-      const uniqueHodData = [...new Set(hodData)];
-      setHodNames(uniqueHodData);
-    } catch (error) {
-      console.error('Error fetching HOD data:', error);
-      toast.error(`Failed to load HOD data: ${error.message}`);
+    const result = await fetchHodsApi();
+    if (result.success) {
+      setHodNames(result.data.map(h => h.hodName));
+    } else {
+      toast.error(`Failed to load HOD data: ${result.error}`);
     }
   };
 
